@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <ctime>
+#include <filesystem>
 #include <iostream>
 #include <numeric>
 #include <opencv2/core/hal/interface.h>
@@ -23,12 +24,14 @@
 
 using namespace Ort::Experimental;
 
-#define FAKE_INPUT_DATA 1
+// #define FAKE_INPUT_DATA 1
 
 struct Options {
   std::string modelPath;
   std::string quantizedModelPath;
   std::string imagePath;
+  std::string datasetDir;
+  bool verbose = false;
 } Option;
 
 void printModelInfo(Ort::Experimental::Session &session) {
@@ -107,7 +110,7 @@ getInput(Ort::Experimental::Session &session, std::string imagePath) {
   assert(inputShapes.size() == 1 && "getInput");
   assert(inputShapes[0].size() == 4 && "getInput");
   for (auto &shape : inputShapes) {
-    cv::Mat image = cv::imread(imagePath);
+    cv::Mat image = cv::imread(imagePath, cv::IMREAD_COLOR);
     if (image.empty()) {
       fmt::print("Could not open or find the image\n");
       return {};
@@ -117,10 +120,15 @@ getInput(Ort::Experimental::Session &session, std::string imagePath) {
     cv::Mat imageCHW;
     cv::cvtColor(imageResized, imageCHW, cv::COLOR_BGR2RGB);
     auto flat_image = hwc2chw(imageCHW);
-    flat_image.convertTo(flat_image, CV_32FC3);
-
+    flat_image.convertTo(flat_image, CV_32F);
     int product =
         std::accumulate(shape.begin(), shape.end(), 1, std::multiplies<>());
+    // 打印flat_image前10个元素
+    // for (int i = 0; i < 10; i++) {
+    //   fmt::print("flat_image: {}\n", flat_image.at<float>(i));
+    // }
+
+    // fmt::print("type: {}\n", flat_image.type());
 
     inputValue.push_back(
         Value::CreateTensor(flat_image.ptr<float>(), product, shape));
@@ -148,9 +156,13 @@ auto runModel(Ort::Experimental::Session &session,
 
   auto topKResult = topK(std::move(outputValue[0]), K);
 
-  for (const auto &result : topKResult) {
-    fmt::print("result: {}\n", topKResultToString(result));
+  if (Option.verbose) {
+    for (const auto &result : topKResult) {
+      fmt::print("result: {}\n", topKResultToString(result));
+    }
   }
+  auto top1 = topKResult[0][0];
+  return top1;
 }
 
 auto testRead(std::string imagePath) {
@@ -166,41 +178,145 @@ auto testRead(std::string imagePath) {
   auto flat_image = hwc2chw(imageCHW);
 }
 
+ImageInfo parseString(const std::string &str, const std::string &splitters) {
+  std::vector<std::string> result;
+  std::string current = "";
+  for (size_t i = 0; i < str.size(); i++) {
+    if (splitters.find(str[i]) != std::string::npos) {
+      if (!current.empty()) {
+        result.push_back(current);
+        current = "";
+      }
+      continue;
+    }
+    current += str[i];
+  }
+  if (!current.empty())
+    result.push_back(current);
+  return ImageInfo{std::stoi(result[1]), std::stoi(result[3])};
+}
+
+class DatasetRunner {
+  std::string datasetDir;
+  const std::vector<std::string> &files;
+  const std::map<std::string, ImageInfo> &m;
+
+  Ort::Experimental::Session &session;
+
+public:
+  DatasetRunner(std::string datasetDir, const std::vector<std::string> &files,
+                const std::map<std::string, ImageInfo> &m,
+                Ort::Experimental::Session &session)
+      : datasetDir(datasetDir), files(files), m(m), session(session) {}
+
+  void printModelInfo() { ::printModelInfo(session); }
+
+  float run() {
+
+
+    unsigned correct = 0;
+    int i = 0;
+    for (const std::string &f : files) {
+      auto info = m.at(f);
+      auto [inputValue, outputValue] = getInput(session, f);
+      auto top1 = runModel(session, inputValue, outputValue);
+      if (info.label == top1.label) {
+        correct += 1;
+      }
+      bar.tick();
+      i++;
+    }
+    return (float)correct / files.size();
+  }
+};
+
 int main(int argc, char *argv[]) {
   CLI::App app{"onnxruntime app"};
 
   app.add_option("-m,--model", Option.modelPath, "path to model")->required();
   app.add_option("-q,--quantized_model", Option.quantizedModelPath,
                  "path to quantized model");
-  app.add_option("-i,--image", Option.imagePath, "path to image")->required();
+  auto group = app.add_option_group("data");
+  group->add_option("-i,--image", Option.imagePath, "path to image");
+  group->add_option("-d,--dataaset-dir", Option.datasetDir,
+                    "path to dataset dir");
+  app.add_flag("-v,--verbose", Option.verbose, "verbose mode");
+
+  group->require_option(1);
+
   CLI11_PARSE(app, argc, argv);
-
   auto start = std::chrono::high_resolution_clock::now();
-  {
-    fmt::print("model path: {}\n", Option.modelPath);
-    Ort::Env env(ORT_LOGGING_LEVEL_WARNING);
-    Ort::SessionOptions session_options;
+  if (!Option.imagePath.empty()) {
+    {
+      fmt::print("model path: {}\n", Option.modelPath);
+      Ort::Env env(ORT_LOGGING_LEVEL_WARNING);
+      Ort::SessionOptions session_options;
 
-    Ort::Experimental::Session session(env, Option.modelPath, session_options);
+      Ort::Experimental::Session session(env, Option.modelPath,
+                                         session_options);
 
-    printModelInfo(session);
+      printModelInfo(session);
 
-    auto [inputValue, outputValue] = getInput(session, Option.imagePath);
-    runModel(session, inputValue, outputValue);
+      auto [inputValue, outputValue] = getInput(session, Option.imagePath);
+      runModel(session, inputValue, outputValue);
+    }
+
+    if (!Option.quantizedModelPath.empty()) {
+      fmt::print("quantized model path: {}\n", Option.quantizedModelPath);
+      Ort::Env env(ORT_LOGGING_LEVEL_WARNING);
+      Ort::SessionOptions session_options;
+
+      Ort::Experimental::Session session(env, Option.quantizedModelPath,
+                                         session_options);
+
+      printModelInfo(session);
+
+      auto [inputValue, outputValue] = getInput(session, Option.imagePath);
+      runModel(session, inputValue, outputValue);
+    }
   }
 
-  if (!Option.quantizedModelPath.empty()) {
-    fmt::print("quantized model path: {}\n", Option.quantizedModelPath);
-    Ort::Env env(ORT_LOGGING_LEVEL_WARNING);
-    Ort::SessionOptions session_options;
+  if (!Option.datasetDir.empty()) {
+    std::vector<std::string> files;
+    for (const auto &entry :
+         std::filesystem::directory_iterator(Option.datasetDir)) {
+      files.push_back(entry.path().string());
+    }
 
-    Ort::Experimental::Session session(env, Option.quantizedModelPath,
-                                       session_options);
+    // parse file name
+    std::map<std::string, ImageInfo> m;
+    for (const std::string &f : files) {
+      auto info = parseString(f, "_.");
+      m[f] = info;
+    }
 
-    printModelInfo(session);
+    {
+      fmt::print("model path: {}\n", Option.modelPath);
+      Ort::Env env(ORT_LOGGING_LEVEL_WARNING);
+      Ort::SessionOptions session_options;
 
-    auto [inputValue, outputValue] = getInput(session, Option.imagePath);
-    runModel(session, inputValue, outputValue);
+      Ort::Experimental::Session session(env, Option.modelPath,
+                                         session_options);
+
+      DatasetRunner runner(Option.datasetDir, files, m, session);
+      runner.printModelInfo();
+      float accuracy = runner.run();
+      fmt::print("accuracy: {}\n", accuracy);
+    }
+
+    if (!Option.quantizedModelPath.empty()) {
+      fmt::print("quantized model path: {}\n", Option.quantizedModelPath);
+      Ort::Env env(ORT_LOGGING_LEVEL_WARNING);
+      Ort::SessionOptions session_options;
+
+      Ort::Experimental::Session session(env, Option.quantizedModelPath,
+                                         session_options);
+
+      DatasetRunner runner(Option.datasetDir, files, m, session);
+      runner.printModelInfo();
+      float accuracy = runner.run();
+      fmt::print("accuracy: {}\n", accuracy);
+    }
   }
 
   auto end = std::chrono::high_resolution_clock::now();

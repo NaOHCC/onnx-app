@@ -1,5 +1,6 @@
 #pragma once
 
+#include "fmt/format.h"
 #include "onnxruntime/core/session/experimental_onnxruntime_cxx_api.h"
 #include <algorithm>
 #include <assert.h>
@@ -8,9 +9,17 @@
 #include <utility>
 #include <vector>
 
+using Index = int;
+using Label = int;
+
 template <class T> struct TopKElement {
-  T value;
-  int index;
+  T probability;
+  Label label;
+};
+
+struct ImageInfo {
+  Index index;
+  Label label;
 };
 
 template <typename T>
@@ -21,7 +30,7 @@ std::vector<TopKElement<T>> topK(const std::vector<T> &data, int k) {
 
   using Element = TopKElement<T>; // {value, index}
   auto compare = [](const Element &a, const Element &b) {
-    return a.value < b.value; // 最大堆比较：按值降序排列
+    return a.probability < b.probability; // 最大堆比较：按值降序排列
   };
   std::priority_queue<Element, std::vector<Element>, decltype(compare)> maxHeap(
       compare);
@@ -110,18 +119,32 @@ template <class T> auto vectorToString(const std::vector<T> &v) -> std::string {
   return oss.str();
 };
 
-#include <fmt/core.h>
-
 template <class T>
 auto topKResultToString(const std::vector<TopKElement<T>> &topKResult) {
   std::string result = "[";
   for (size_t i = 0; i < topKResult.size(); ++i) {
-    result += fmt::format("(index： {}, value: {})", topKResult[i].index,
-                          topKResult[i].value);
+    result += fmt::format("(label {}, probability: {})", topKResult[i].label,
+                          topKResult[i].probability);
     if (i != topKResult.size() - 1) {
       result += ", ";
     }
   }
   result += "]";
   return result;
+}
+
+// tensor is 1D
+template <class ElT> inline void printTensor(Ort::Value &tensor) {
+  auto typeAndShape = tensor.GetTensorTypeAndShapeInfo();
+  auto shape = typeAndShape.GetShape();
+  auto tensor_data = tensor.GetTensorData<ElT>();
+  fmt::print("shape: {}\n", vectorToString(shape));
+  fmt::print("data: [");
+  for (int i = 0; i < shape[0]; ++i) {
+    fmt::print("{}", tensor_data[i]);
+    if (i != shape[0] - 1) {
+      fmt::print(", ");
+    }
+  }
+  fmt::print("]\n");
 }

@@ -22,6 +22,8 @@
 #include <tuple>
 #include <vector>
 
+#include "indicators.hpp"
+
 using namespace Ort::Experimental;
 
 // #define FAKE_INPUT_DATA 1
@@ -213,6 +215,16 @@ public:
 
   float run() {
 
+    using namespace indicators;
+    BlockProgressBar bar{
+        option::BarWidth{80},
+        option::Start{"["},
+        option::End{"]"},
+        option::ForegroundColor{Color::white},
+        option::ShowElapsedTime{true},
+        option::ShowRemainingTime{true},
+        option::FontStyles{std::vector<FontStyle>{FontStyle::bold}},
+        option::MaxProgress{files.size()}};
 
     unsigned correct = 0;
     int i = 0;
@@ -225,7 +237,13 @@ public:
       }
       bar.tick();
       i++;
+      // auto postfixText = fmt::format("acc: {}", (float)correct / i);
+      // bar.set_option(option::PostfixText{postfixText});
+      bar.set_option(option::PostfixText{std::string("acc: ") +
+                                         std::to_string((float)correct / i)});
     }
+    bar.mark_as_completed();
+    indicators::show_console_cursor(true);
     return (float)correct / files.size();
   }
 };

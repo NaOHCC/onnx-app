@@ -322,7 +322,7 @@ int main(int argc, char *argv[]) {
       DatasetRunner runner(Option.datasetDir, files, m, session);
       runner.printModelInfo();
       float accuracy = runner.run();
-      fmt::print("accuracy: {}\n", accuracy);
+      fmt::print("accuracy: {:.4f}%\n", accuracy * 100);
     }
 
     if (!Option.quantizedModelPath.empty()) {
@@ -336,7 +336,7 @@ int main(int argc, char *argv[]) {
       DatasetRunner runner(Option.datasetDir, files, m, session);
       runner.printModelInfo();
       float accuracy = runner.run();
-      fmt::print("accuracy: {}\n", accuracy);
+      fmt::print("accuracy: {:.4f}%\n", accuracy * 100);
     }
   }
 

@@ -122,7 +122,7 @@ getInput(Ort::Experimental::Session &session, std::string imagePath) {
     cv::Mat imageCHW;
     cv::cvtColor(imageResized, imageCHW, cv::COLOR_BGR2RGB);
     auto flat_image = hwc2chw(imageCHW);
-    flat_image.convertTo(flat_image, CV_32F);
+    flat_image.convertTo(flat_image, CV_32F, 1.0 / 255.0);
     int product =
         std::accumulate(shape.begin(), shape.end(), 1, std::multiplies<>());
     // 打印flat_image前10个元素

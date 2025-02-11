@@ -239,8 +239,11 @@ public:
       i++;
       // auto postfixText = fmt::format("acc: {}", (float)correct / i);
       // bar.set_option(option::PostfixText{postfixText});
-      bar.set_option(option::PostfixText{std::string("acc: ") +
-                                         std::to_string((float)correct / i)});
+      //
+
+      // bar.set_option(option::PostfixText{std::string("acc: ") +
+      //                                    std::to_string((float)correct /
+      //                                    i)});
     }
     bar.mark_as_completed();
     indicators::show_console_cursor(true);
